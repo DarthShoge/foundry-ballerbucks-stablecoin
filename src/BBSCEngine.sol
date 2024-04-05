@@ -32,7 +32,7 @@ import {console} from "forge-std/console.sol";
  * @title BBSCEngine
  * @author @darthshoge.
  * 
- * The system s designed to be as minimal as possible, and have the tokens maintain a peg to the GBP.
+ * The system s designed to be as minimal as possible, and have the tokens maintain a peg to the GBP or another chainlink currency feed.
  * this stablecoin has the properties:
  * Collateral: Exogenous (ETH & BTC)
  * Minting: Algorithmic
@@ -62,7 +62,7 @@ contract BBSCEngine is ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
     uint256 private constant LIQUIDATION_BONUS = 10;
 
     string private s_crossCcy;
@@ -157,7 +157,8 @@ contract BBSCEngine is ReentrancyGuard {
     * @param bbscToBurn The amount of BBSCTokens to burn.
     * @notice they must have more collateral value than the minimum threshold.
     */
-    function redeemCollateralForBBSCTokens(address tokenCollateralAddress, uint256 amount, uint256 bbscToBurn) external {
+    function redeemCollateralForBBSCTokens(address tokenCollateralAddress, uint256 amount, uint256 bbscToBurn) 
+        public {
         burnBBSC(bbscToBurn);
         redeemCollateral(tokenCollateralAddress, amount);
     }
@@ -167,6 +168,7 @@ contract BBSCEngine is ReentrancyGuard {
     function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral) 
         public
         moreThanZero(amountCollateral)  
+        isAllowedToken(tokenCollateralAddress)
         nonReentrant
         {
             _redeemCollateral(tokenCollateralAddress, amountCollateral, msg.sender, msg.sender);
@@ -189,9 +191,11 @@ contract BBSCEngine is ReentrancyGuard {
 
     }
 
-    function burnBBSC(uint256 amount) moreThanZero(amount) public {
+    function burnBBSC(uint256 amount) public {
         _burnBBSC(amount, msg.sender, msg.sender);
     }
+
+
     /*
      * @notice This function allows anyone to liquidate a user aka call redeemCollateralForBBSC on the users behalf 
         * @param collateral The address of the token to be redeemed as collateral.
@@ -214,9 +218,12 @@ contract BBSCEngine is ReentrancyGuard {
         // Unhealthy user: £140 ETH, £100 BBSC -> debt to cover £100
         // liquidator get 10% bonus thus: we give them £110 worth of collateral for BBSC
         // which we then burn. The remaining £30 worth of collateral is moved to the treasury
-        uint256 collateralToLiquidate = getCcyValue(collateral, debtToCover);
+        uint256 collateralToLiquidate = getTokenAmountFromCcy(collateral, debtToCover);
         uint256 bonusCollateral = (collateralToLiquidate * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
         uint256 totalCollateralToRedeem = collateralToLiquidate + bonusCollateral;
+        console.log("Collateral to liquidate: ", collateralToLiquidate);
+        console.log("Bonus collateral: ", bonusCollateral);
+        console.log("Total collateral to redeem: ", totalCollateralToRedeem);
         _redeemCollateral(collateral, totalCollateralToRedeem, user, msg.sender);
         _burnBBSC(debtToCover, user, msg.sender);
 
@@ -230,10 +237,14 @@ contract BBSCEngine is ReentrancyGuard {
     // private/internal functions  //
     //*****************************//
 
-    function _burnBBSC(uint256 amount, address onBehalfOf, address from) private {
+    function _burnBBSC(uint256 amount, address onBehalfOf, address from) 
+        moreThanZero(amount) 
+        private {
         s_BBSCMinted[onBehalfOf] -= amount;
+        
         bool success = i_bbsc.transferFrom(from, address(this), amount);
         if (!success) {
+
             revert BBSCEngine__TransferFailed();
         }
         i_bbsc.burn(amount);
@@ -252,11 +263,15 @@ contract BBSCEngine is ReentrancyGuard {
     function _getAccountInformation(address user) private view returns(uint256 totalMinted, uint256 collateralGBPValue) {
         totalMinted = s_BBSCMinted[user];
         collateralGBPValue = getCollateralValue(user);
-
     }
 
     function _healthFactor(address user) private view returns(uint256) {
         (uint256 totalMinted, uint256 collateralCcyValue) = _getAccountInformation(user);
+
+        if(totalMinted == 0) {
+            return type(uint256).max;
+        }
+
         uint256 collateralAdjustedForThreshold = (collateralCcyValue * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         return (collateralAdjustedForThreshold * PRECISION) / totalMinted;
         // return collateralGBPValue / totalMinted;
@@ -276,14 +291,32 @@ contract BBSCEngine is ReentrancyGuard {
         for( uint256 i= 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
             uint256 collateralAmount = s_userCollateral[user][token];
+            totalCollateralValue += getCcyValue(token, collateralAmount);
+        }
+    }
+
+    function getCollateralUsdValue(address user) public view returns(uint256 totalCollateralValue) {
+        for( uint256 i= 0; i < s_collateralTokens.length; i++) {
+            address token = s_collateralTokens[i];
+            uint256 collateralAmount = s_userCollateral[user][token];
             totalCollateralValue += getUsdValue(token, collateralAmount);
         }
     }
+
 
     function getUsdValue(address token, uint256 amount) public view returns(uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_tokenPriceFeeds[token]);
         (, int price, , , ) = priceFeed.latestRoundData();
         return ((uint256(price) *  ADDITIONAL_FEED_PRECISION) * amount) / 1e18;
+    }
+
+    function getTokenAmountFromCcy(address token, uint256 ccyAmountInWei) public view returns(uint256) {
+        AggregatorV3Interface tokenPriceFeed = AggregatorV3Interface(s_tokenPriceFeeds[token]);
+        (, int tokenPrice, , , ) = tokenPriceFeed.latestRoundData();
+        AggregatorV3Interface crossPriceFeed = AggregatorV3Interface(i_crossCcyFeed);
+        (, int crossPrice, , , ) = crossPriceFeed.latestRoundData();
+        uint256 price = (uint256(tokenPrice) / uint256(crossPrice)) * FEED_PRECISION;
+        return ((ccyAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
 
     function getCcyValue(address token, uint256 amount) public view returns(uint256) {
@@ -295,11 +328,27 @@ contract BBSCEngine is ReentrancyGuard {
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / 1e18;
     }
 
+    function getAccountInfo() external view returns(uint256 totalMinted, uint256 collateralGBPValue) {
+        return _getAccountInformation(msg.sender);
+    }
+
     //*****************************//
     // getters                     //
     //*****************************//
 
     function getCcy() public view returns(string memory) {
         return s_crossCcy;
+    }
+
+    function getBBSCMinted() public view returns(uint256) {
+        return s_BBSCMinted[msg.sender];
+    }
+
+    function getHealthFactor(address user) public view returns(uint256) {
+        return _healthFactor(user);
+    }
+
+    function getLiquidationBonus() public pure returns(uint256) {
+        return LIQUIDATION_BONUS;
     }
 }
