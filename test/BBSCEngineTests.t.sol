@@ -377,7 +377,7 @@ contract BBSCEngineTests is Test {
     //LIQUIDATOR gets 10% bonus on liquidation = 8 * 1.1 = 8.8 ETH
     function testLiquidationPayoutIsCorrect() 
         public 
-        liquidated(10 ether, ONE_ETH_IN_GBP_E18, 20 ether, 500e8) {
+        liquidated(COLLATERAL_AMOUNT, ONE_ETH_IN_GBP_E18, COLLATERAL_AMOUNT*2, 500e8) {
         // liquidated(10 ether, amountToMint, 20 ether, 18e8) {
             uint256 liquidatorWethBalance = ERC20Mock(weth).balanceOf(LIQUIDATOR);
             uint256 expectedWeth = engine.getTokenAmountFromCcy(weth, ONE_ETH_IN_GBP_E18)

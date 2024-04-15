@@ -291,7 +291,9 @@ contract BBSCEngine is ReentrancyGuard {
         for( uint256 i= 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
             uint256 collateralAmount = s_userCollateral[user][token];
-            totalCollateralValue += getCcyValue(token, collateralAmount);
+            if(collateralAmount > 0){
+                totalCollateralValue += getCcyValue(token, collateralAmount);
+            }
         }
     }
 
@@ -328,13 +330,17 @@ contract BBSCEngine is ReentrancyGuard {
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / 1e18;
     }
 
-    function getAccountInfo() external view returns(uint256 totalMinted, uint256 collateralGBPValue) {
-        return _getAccountInformation(msg.sender);
+    function getUserAccountInfo(address user) external view returns(uint256 totalMinted, uint256 collateralGBPValue) {
+        return _getAccountInformation(user);
     }
 
     //*****************************//
     // getters                     //
     //*****************************//
+
+    function getAccountInfo() external view returns(uint256 totalMinted, uint256 collateralGBPValue) {
+        return _getAccountInformation(msg.sender);
+    }
 
     function getCcy() public view returns(string memory) {
         return s_crossCcy;
@@ -351,4 +357,13 @@ contract BBSCEngine is ReentrancyGuard {
     function getLiquidationBonus() public pure returns(uint256) {
         return LIQUIDATION_BONUS;
     }
+
+    function getCollateralTokens() public view returns(address[] memory) {
+        return s_collateralTokens;
+    }
+
+    function getUserCollateralBalance(address collateral) public view returns(uint256) {
+        return s_userCollateral[msg.sender][collateral];
+    }
+
 }
