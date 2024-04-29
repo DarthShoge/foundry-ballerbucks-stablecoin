@@ -8,6 +8,7 @@ import {BallerBucksStablecoin} from "src/BallerBucksStablecoin.sol";
 import {BBSCEngine} from "src/BBSCEngine.sol";
 import {HelperConfig} from "script/HelperConfig.s.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {MockV3Aggregator} from "test/mocks/MockV3Aggregator.sol";
 
 
 
@@ -17,8 +18,9 @@ contract Handler is Test {
     ERC20Mock public weth;
     ERC20Mock public wbtc;
     uint256 public timesMintIsCalled = 0;
-    mapping(address => bool) public usersWithCollateral;
-
+    address[] public usersWithDeposits;
+    MockV3Aggregator public mockEthUsdPriceFeed;
+    MockV3Aggregator public mockGbpUsdPriceFeed;
     uint256 constant MAX_DEPOSIT = type(uint96).max;
 
 
@@ -29,6 +31,16 @@ contract Handler is Test {
 
         weth = ERC20Mock(addresses[0]);
         wbtc = ERC20Mock(addresses[1]);
+
+        mockEthUsdPriceFeed = MockV3Aggregator(engine.getCollateralFeed(address(weth)));
+        mockGbpUsdPriceFeed = MockV3Aggregator(engine.getCcyFeed());
+
+    }
+
+    function updateCollateralPrice(uint96 price) public {
+        int256 intPrice = int256(uint(price));
+        int256 currentPrice = mockEthUsdPriceFeed.latestAnswer();
+        mockEthUsdPriceFeed.updateAnswer(currentPrice + intPrice);
     }
 
     function depositCollateral(uint256 collateralSeed ,uint256 amount) public {
@@ -38,8 +50,8 @@ contract Handler is Test {
         collateral.mint(msg.sender, amount);
         collateral.approve(address(engine), amount);
         engine.depositCollateral(address(collateral), amount);
-        usersWithCollateral[msg.sender] = true;
         vm.stopPrank();
+        usersWithDeposits.push(msg.sender);
     }
 
     function redeemCollateral(uint256 collateralSeed, uint256 amount) public {
@@ -53,19 +65,20 @@ contract Handler is Test {
         engine.redeemCollateral(address(collateral), maxAmount);
     }
 
-    function mintBbsc(uint256 amount) public {
-        if(!usersWithCollateral[msg.sender]) {
+    function mintBbsc(uint256 amount, uint256 adressSeed) public {
+        if(usersWithDeposits.length == 0) {
             return;
         }
+        address sender = usersWithDeposits[adressSeed % usersWithDeposits.length];
+        timesMintIsCalled++;
 
-        (uint256 totalMinted, uint256 collateralGBPValue) = engine.getUserAccountInfo(msg.sender);
+        (uint256 totalMinted, uint256 collateralGBPValue) = engine.getUserAccountInfo(sender);
         int256 maxMintable =  (int256(collateralGBPValue) / 2) - int256(totalMinted);
         amount = bound(amount, 0, uint256(maxMintable));
         if(amount <= 0) {
             return;
         }
-        timesMintIsCalled++;
-        vm.startPrank(msg.sender);
+        vm.startPrank(sender);
         engine.mintBBSC(amount);
         vm.stopPrank();
     }

@@ -50,7 +50,7 @@ contract BBSCEngineTests is Test {
     }
 
     modifier transitionFeedPrice(address priceFeed, int256  newPrice) {
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + 1 hours);
         MockV3Aggregator(priceFeed).updateAnswer(newPrice);
         _;
     }

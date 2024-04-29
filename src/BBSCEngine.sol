@@ -27,6 +27,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import {console} from "forge-std/console.sol";
+import {OracleLib} from "src/libraries/OracleLib.sol";
 
 /**
  * @title BBSCEngine
@@ -55,6 +56,9 @@ contract BBSCEngine is ReentrancyGuard {
     error BBSCEngine__HealthFactorBroken(uint256 healthFactor); 
     error BBSCEngine__HealthFactorOk(); 
     error BBSCEngine__HealthFactorNotImproved(uint256 healthFactor);
+
+    // Types
+    using OracleLib for AggregatorV3Interface;
 
     //State Variables
     uint256 private constant FEED_PRECISION = 1e8;
@@ -308,24 +312,24 @@ contract BBSCEngine is ReentrancyGuard {
 
     function getUsdValue(address token, uint256 amount) public view returns(uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_tokenPriceFeeds[token]);
-        (, int price, , , ) = priceFeed.latestRoundData();
+        (, int price, , , ) = priceFeed.stalePriceCheck();
         return ((uint256(price) *  ADDITIONAL_FEED_PRECISION) * amount) / 1e18;
     }
 
     function getTokenAmountFromCcy(address token, uint256 ccyAmountInWei) public view returns(uint256) {
         AggregatorV3Interface tokenPriceFeed = AggregatorV3Interface(s_tokenPriceFeeds[token]);
-        (, int tokenPrice, , , ) = tokenPriceFeed.latestRoundData();
+        (, int tokenPrice, , , ) = tokenPriceFeed.stalePriceCheck();
         AggregatorV3Interface crossPriceFeed = AggregatorV3Interface(i_crossCcyFeed);
-        (, int crossPrice, , , ) = crossPriceFeed.latestRoundData();
+        (, int crossPrice, , , ) = crossPriceFeed.stalePriceCheck();
         uint256 price = (uint256(tokenPrice) / uint256(crossPrice)) * FEED_PRECISION;
         return ((ccyAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
 
     function getCcyValue(address token, uint256 amount) public view returns(uint256) {
         AggregatorV3Interface tokenPriceFeed = AggregatorV3Interface(s_tokenPriceFeeds[token]);
-        (, int tokenPrice, , , ) = tokenPriceFeed.latestRoundData();
+        (, int tokenPrice, , , ) = tokenPriceFeed.stalePriceCheck();
         AggregatorV3Interface crossPriceFeed = AggregatorV3Interface(i_crossCcyFeed);
-        (, int crossPrice, , , ) = crossPriceFeed.latestRoundData();
+        (, int crossPrice, , , ) = crossPriceFeed.stalePriceCheck();
         uint256 price = (uint256(tokenPrice) / uint256(crossPrice)) * FEED_PRECISION;
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / 1e18;
     }
@@ -364,6 +368,14 @@ contract BBSCEngine is ReentrancyGuard {
 
     function getUserCollateralBalance(address collateral) public view returns(uint256) {
         return s_userCollateral[msg.sender][collateral];
+    }
+
+    function getCollateralFeed(address token) public view returns(address) {
+        return s_tokenPriceFeeds[token];
+    }
+
+    function getCcyFeed() public view returns(address) {
+        return i_crossCcyFeed;
     }
 
 }
